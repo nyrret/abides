@@ -33,6 +33,7 @@ class OrderBook:
 
         # Create an order history for the exchange to report to certain agent types.
         self.history = [{}]
+        self.history_idx = 0
 
         # Map order IDs to idx in self.history
         self.order_to_history_idx = {} 
@@ -60,12 +61,14 @@ class OrderBook:
             return
 
         # Add the order under index 0 of history: orders since the most recent trade.
-        self.history[0][order.order_id] = {'entry_time': self.owner.currentTime,
+        idx = self.history_idx % self.owner.stream_history
+        self.history[idx][order.order_id] = {
+                                           'entry_time': self.owner.currentTime,
                                            'quantity': order.quantity, 'is_buy_order': order.is_buy_order,
                                            'limit_price': order.limit_price, 'transactions': [],
                                            'modifications': [],
                                            'cancellations': []}
-        self.order_to_history_idx[order.order_id] = 0
+        self.order_to_history_idx[order.order_id] = idx
 
         matching = True
 
@@ -138,15 +141,14 @@ class OrderBook:
                 self.last_trade = avg_price
 
                 # Transaction occurred, so advance indices.
-                self.history.insert(0, {})
+                self.history_idx += 1
 
-                # Truncate history to required length.
-                self.history = self.history[:self.owner.stream_history + 1]
+                # Remove old orders at index we overwrite
+                old_orders = self.history[self.history_idx]
+                for order in old_orders:
+                    self.order_to_history_idx.pop(order.order_id)
 
-                # update order to history idx mapping 
-                self.order_to_history_idx = {order: idx + 1 
-                                             for order, idx in self.order_to_history_idx.items()
-                                             if idx < self.owner.stream_history + 1}
+                self.history[self.history_idx] = {}
 
             # Finally, log the full depth of the order book, ONLY if we have been requested to store the order book
             # for later visualization.  (This is slow.)
@@ -250,8 +252,8 @@ class OrderBook:
             # Record the transaction in the order history and push the indices
             # out one, possibly truncating to the maximum history length.
 
-            # The incoming order is guaranteed to exist under index 0.
-            self.history[0][order.order_id]['transactions'].append((self.owner.currentTime, order.quantity))
+            # The incoming order is guaranteed to exist under most recent index.
+            self.history[self.history_idx][order.order_id]['transactions'].append((self.owner.currentTime, order.quantity))
 
             # The pre-existing order may or may not still be in the recent history.
             if matched_order.order_id in self.order_to_history_idx:
