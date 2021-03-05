@@ -34,6 +34,9 @@ class OrderBook:
         # Create an order history for the exchange to report to certain agent types.
         self.history = [{}]
 
+        # Map order IDs to idx in self.history
+        self.order_to_history_idx = {} 
+
         # Last timestamp the orderbook for that symbol was updated
         self.last_update_ts = None
 
@@ -62,6 +65,7 @@ class OrderBook:
                                            'limit_price': order.limit_price, 'transactions': [],
                                            'modifications': [],
                                            'cancellations': []}
+        self.order_to_history_idx[order.order_id] = 0
 
         matching = True
 
@@ -138,6 +142,11 @@ class OrderBook:
 
                 # Truncate history to required length.
                 self.history = self.history[:self.owner.stream_history + 1]
+
+                # update order to history idx mapping 
+                self.order_to_history_idx = {order: idx + 1 
+                                             for order, idx in self.order_to_history_idx.items()
+                                             if idx < self.owner.stream_history + 1}
 
             # Finally, log the full depth of the order book, ONLY if we have been requested to store the order book
             # for later visualization.  (This is slow.)
@@ -245,12 +254,19 @@ class OrderBook:
             self.history[0][order.order_id]['transactions'].append((self.owner.currentTime, order.quantity))
 
             # The pre-existing order may or may not still be in the recent history.
-            for idx, orders in enumerate(self.history):
-                if matched_order.order_id not in orders: continue
+            if matched_order.order_id in self.order_to_history_idx:
+                idx = self.order_to_history_idx[matched_order.order_id]
 
                 # Found the matched order in history.  Update it with this transaction.
                 self.history[idx][matched_order.order_id]['transactions'].append(
                     (self.owner.currentTime, matched_order.quantity))
+
+            # for idx, orders in enumerate(self.history):
+                # if matched_order.order_id not in orders: continue
+
+                # Found the matched order in history.  Update it with this transaction.
+                # self.history[idx][matched_order.order_id]['transactions'].append(
+                #    (self.owner.currentTime, matched_order.quantity))
 
             # Return (only the executed portion of) the matched order.
             return matched_order
