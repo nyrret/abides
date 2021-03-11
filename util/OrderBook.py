@@ -32,10 +32,15 @@ class OrderBook:
         self.quotes_seen = set()
 
         # Create an order history for the exchange to report to certain agent types.
-        self.history = [{}]
+        # Change: Fixed-Size history (self.owner.stream_history)
+        self.history = [{} for i in range(self.owner.stream_history)]
+        self.order_id_to_history_idx = {} # implementing Terryn's strategy of mapping order_id to history_idx
 
-        # Map order IDs to idx in self.history
-        self.order_to_history_idx = {} 
+        # counter for history idx position since we don't truncate fixed-size history
+        self.history_idx_counter = 0
+
+        # Counter that stores orders since most recent trade
+        self.orders_since_most_recent_trade = 0
 
         # Last timestamp the orderbook for that symbol was updated
         self.last_update_ts = None
@@ -59,13 +64,17 @@ class OrderBook:
             log_print("{} order discarded.  Quantity ({}) must be a positive integer.", order.symbol, order.quantity)
             return
 
-        # Add the order under index 0 of history: orders since the most recent trade.
-        self.history[0][order.order_id] = {'entry_time': self.owner.currentTime,
+        # Old Behavior: Add the order under index 0 of history: orders since the most recent trade.
+        # New behavior: adds to history[history_idx_counter % len(self.history)]
+        insert_idx = self.history_idx_counter % len(self.history)
+        self.history[insert_idx][order.order_id] = {'entry_time': self.owner.currentTime,
                                            'quantity': order.quantity, 'is_buy_order': order.is_buy_order,
                                            'limit_price': order.limit_price, 'transactions': [],
                                            'modifications': [],
                                            'cancellations': []}
-        self.order_to_history_idx[order.order_id] = 0
+
+        self.order_id_to_history_idx[order.order_id] = self.history_idx_counter # note the "real index" is history_idx_counter % len(history)
+        self.orders_since_most_recent_trade += 1
 
         matching = True
 
@@ -138,15 +147,17 @@ class OrderBook:
                 self.last_trade = avg_price
 
                 # Transaction occurred, so advance indices.
-                self.history.insert(0, {})
+                # self.history.insert(0, {})
+                # New behavior: increment history_idx_counter
+                self.history_idx_counter += 1
 
                 # Truncate history to required length.
-                self.history = self.history[:self.owner.stream_history + 1]
+                # self.history = self.history[:self.owner.stream_history + 1]
+                # New behavior - resizing history not required since using fixed-size
+                # just reset self.orders_since_most_recent_trade
 
-                # update order to history idx mapping 
-                self.order_to_history_idx = {order: idx + 1 
-                                             for order, idx in self.order_to_history_idx.items()
-                                             if idx < self.owner.stream_history + 1}
+                self.orders_since_most_recent_trade = 0
+                
 
             # Finally, log the full depth of the order book, ONLY if we have been requested to store the order book
             # for later visualization.  (This is slow.)
@@ -251,22 +262,26 @@ class OrderBook:
             # out one, possibly truncating to the maximum history length.
 
             # The incoming order is guaranteed to exist under index 0.
-            self.history[0][order.order_id]['transactions'].append((self.owner.currentTime, order.quantity))
+            # New behavior: under index self.order_id_to_history_idx[order.order_id]
+
+            order_idx = self.order_id_to_history_idx[order.order_id] % len(self.history)
+            self.history[order_idx][order.order_id]['transactions'].append((self.owner.currentTime, order.quantity))
 
             # The pre-existing order may or may not still be in the recent history.
-            if matched_order.order_id in self.order_to_history_idx:
-                idx = self.order_to_history_idx[matched_order.order_id]
-
-                # Found the matched order in history.  Update it with this transaction.
-                self.history[idx][matched_order.order_id]['transactions'].append(
-                    (self.owner.currentTime, matched_order.quantity))
-
             # for idx, orders in enumerate(self.history):
-                # if matched_order.order_id not in orders: continue
+            if matched_order.order_id in self.order_id_to_history_idx:
 
-                # Found the matched order in history.  Update it with this transaction.
-                # self.history[idx][matched_order.order_id]['transactions'].append(
-                #    (self.owner.currentTime, matched_order.quantity))
+                matched_order_history_idx_absolute = self.order_id_to_history_idx[matched_order.order_id]
+                matched_order_history_idx_modulo = matched_order_history_idx_absolute % len(self.history)
+
+                # an item is in recent history if 
+                # self.history_idx_counter - matched_order_history_idx_absolute < len(self.history)
+                if matched_order.order_id in self.history[matched_order_history_idx_modulo] and \
+                self.history_idx_counter - matched_order_history_idx_absolute < len(self.history):
+
+                    # Found the matched order in history.  Update it with this transaction.
+                    self.history[matched_order_history_idx_modulo][matched_order.order_id]['transactions'].append(
+                        (self.owner.currentTime, matched_order.quantity))
 
             # Return (only the executed portion of) the matched order.
             return matched_order
@@ -342,12 +357,22 @@ class OrderBook:
                         cancelled_order = book[i].pop(ci)
 
                         # Record cancellation of the order if it is still present in the recent history structure.
-                        for idx, orders in enumerate(self.history):
-                            if cancelled_order.order_id not in orders: continue
+                        #for idx, orders in enumerate(self.history):
+                            #if cancelled_order.order_id not in orders: continue
 
-                            # Found the cancelled order in history.  Update it with the cancelation.
-                            self.history[idx][cancelled_order.order_id]['cancellations'].append(
-                                (self.owner.currentTime, cancelled_order.quantity))
+                        if cancelled_order.order_id in self.order_id_to_history_idx:
+
+                            cancelled_order_history_idx_absolute = self.order_id_to_history_idx[cancelled_order.order_id]
+                            cancelled_order_history_idx_modulo = cancelled_order_history_idx_absolute % len(self.history)
+
+                            # an item is in recent history if 
+                            # self.history_idx_counter - cancelled_order_history_idx_absolute < len(self.history)
+                            if cancelled_order.order_id in self.history[cancelled_order_history_idx_modulo] and \
+                            self.history_idx_counter - cancelled_order_history_idx_absolute < len(self.history):
+
+                                # Found the cancelled order in history.  Update it with the cancelation.
+                                self.history[cancelled_order_history_idx_modulo][cancelled_order.order_id]['cancellations'].append(
+                                    (self.owner.currentTime, cancelled_order.quantity))
 
                         # If the cancelled price now has no orders, remove it completely.
                         if not book[i]:
@@ -373,15 +398,27 @@ class OrderBook:
                 for mi, mo in enumerate(book[i]):
                     if order.order_id == mo.order_id:
                         book[i][0] = new_order
-                        for idx, orders in enumerate(self.history):
-                            if new_order.order_id not in orders: continue
-                            self.history[idx][new_order.order_id]['modifications'].append(
-                                (self.owner.currentTime, new_order.quantity))
-                            log_print("MODIFIED: order {}", order)
-                            log_print("SENT: notifications of order modification to agent {} for order {}",
-                                      new_order.agent_id, new_order.order_id)
-                            self.owner.sendMessage(order.agent_id,
-                                                   Message({"msg": "ORDER_MODIFIED", "new_order": new_order}))
+
+                        # Old behavior: 
+                        #for idx, orders in enumerate(self.history):
+                           #if new_order.order_id not in orders: continue
+                        # New behavior:
+                        if new_order.order_id in self.order_id_to_history_idx:
+
+                            new_order_history_idx_absolute = self.order_id_to_history_idx[new_order.order_id]
+                            new_order_history_idx_modulo = new_order_history_idx_absolute % len(self.history)
+
+                            # an item is in recent history if 
+                            # self.history_idx_counter - new_order_history_idx_absolute < len(self.history)
+                            if new_order.order_id in self.history[new_order_history_idx_modulo] and \
+                            self.history_idx_counter - new_order_history_idx_absolute < len(self.history):
+                                self.history[new_order_history_idx_modulo][new_order.order_id]['modifications'].append(
+                                    (self.owner.currentTime, new_order.quantity))
+                                log_print("MODIFIED: order {}", order)
+                                log_print("SENT: notifications of order modification to agent {} for order {}",
+                                        new_order.agent_id, new_order.order_id)
+                                self.owner.sendMessage(order.agent_id,
+                                                    Message({"msg": "ORDER_MODIFIED", "new_order": new_order}))
         if order.is_buy_order:
             self.bids = book
         else:
@@ -448,8 +485,12 @@ class OrderBook:
         # Load history into DataFrame
         unrolled_history = []
         for elem in history:
-            for _, val in elem.items():
-                unrolled_history.append(val)
+            for order_id, val in elem.items():
+
+                # New behavior: filter recent history here
+                # recent iff self.history_idx_counter - self.order_id_to_history_idx[order_id] < len(self.history)
+                if self.history_idx_counter - self.order_id_to_history_idx[order_id] < len(self.history):
+                    unrolled_history.append(val)
 
         unrolled_history_df = pd.DataFrame(unrolled_history, columns=[
             'entry_time', 'quantity', 'is_buy_order', 'limit_price', 'transactions', 'modifications', 'cancellations'
