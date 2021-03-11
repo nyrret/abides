@@ -32,7 +32,7 @@ class OrderBook:
         self.quotes_seen = set()
 
         # Create an order history for the exchange to report to certain agent types.
-        self.history = [{}]
+        self.history = [{} for i in range (self.owner.stream_history)]
         self.history_idx = 0
 
         # Map order IDs to idx in self.history
@@ -141,12 +141,13 @@ class OrderBook:
                 self.last_trade = avg_price
 
                 # Transaction occurred, so advance indices.
-                self.history_idx += 1
+                self.history_idx = (self.history_idx + 1) % self.owner.stream_history
 
                 # Remove old orders at index we overwrite
-                old_orders = self.history[self.history_idx]
-                for order in old_orders:
-                    self.order_to_history_idx.pop(order.order_id)
+                if len(self.history) > self.history_idx:
+                  old_orders = self.history[self.history_idx]
+                  for order in old_orders:
+                      self.order_to_history_idx.pop(order)
 
                 self.history[self.history_idx] = {}
 
