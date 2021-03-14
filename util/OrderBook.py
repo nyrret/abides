@@ -37,6 +37,7 @@ class OrderBook:
         self.order_id_to_history_idx = {} # implementing Terryn's strategy of mapping order_id to history_idx
 
         # counter for history idx position since we don't truncate fixed-size history
+        # this should take values in [0, 25000) only
         self.history_idx_counter = 0
 
         # Counter that stores orders since most recent trade
@@ -65,15 +66,15 @@ class OrderBook:
             return
 
         # Old Behavior: Add the order under index 0 of history: orders since the most recent trade.
-        # New behavior: adds to history[history_idx_counter % len(self.history)]
-        insert_idx = self.history_idx_counter % len(self.history)
+        # New behavior: adds to history[history_idx_counter]
+        insert_idx = self.history_idx_counter
         self.history[insert_idx][order.order_id] = {'entry_time': self.owner.currentTime,
                                            'quantity': order.quantity, 'is_buy_order': order.is_buy_order,
                                            'limit_price': order.limit_price, 'transactions': [],
                                            'modifications': [],
                                            'cancellations': []}
 
-        self.order_id_to_history_idx[order.order_id] = self.history_idx_counter # note the "real index" is history_idx_counter % len(history)
+        self.order_id_to_history_idx[order.order_id] = self.history_idx_counter
         self.orders_since_most_recent_trade += 1
 
         matching = True
@@ -148,8 +149,12 @@ class OrderBook:
 
                 # Transaction occurred, so advance indices.
                 # self.history.insert(0, {})
-                # New behavior: increment history_idx_counter
-                self.history_idx_counter += 1
+                # New behavior: increment history_idx_counter (after flushing that index of history)
+
+                history_next_idx = (self.history_idx_counter + 1) % len(self.history)
+                self.history[history_next_idx] = {}
+
+                self.history_idx_counter = history_next_idx
 
                 # Truncate history to required length.
                 # self.history = self.history[:self.owner.stream_history + 1]
@@ -274,10 +279,7 @@ class OrderBook:
                 matched_order_history_idx_absolute = self.order_id_to_history_idx[matched_order.order_id]
                 matched_order_history_idx_modulo = matched_order_history_idx_absolute % len(self.history)
 
-                # an item is in recent history if 
-                # self.history_idx_counter - matched_order_history_idx_absolute < len(self.history)
-                if matched_order.order_id in self.history[matched_order_history_idx_modulo] and \
-                self.history_idx_counter - matched_order_history_idx_absolute < len(self.history):
+                if matched_order.order_id in self.history[matched_order_history_idx_modulo]:
 
                     # Found the matched order in history.  Update it with this transaction.
                     self.history[matched_order_history_idx_modulo][matched_order.order_id]['transactions'].append(
@@ -365,10 +367,7 @@ class OrderBook:
                             cancelled_order_history_idx_absolute = self.order_id_to_history_idx[cancelled_order.order_id]
                             cancelled_order_history_idx_modulo = cancelled_order_history_idx_absolute % len(self.history)
 
-                            # an item is in recent history if 
-                            # self.history_idx_counter - cancelled_order_history_idx_absolute < len(self.history)
-                            if cancelled_order.order_id in self.history[cancelled_order_history_idx_modulo] and \
-                            self.history_idx_counter - cancelled_order_history_idx_absolute < len(self.history):
+                            if cancelled_order.order_id in self.history[cancelled_order_history_idx_modulo]:
 
                                 # Found the cancelled order in history.  Update it with the cancelation.
                                 self.history[cancelled_order_history_idx_modulo][cancelled_order.order_id]['cancellations'].append(
@@ -408,10 +407,7 @@ class OrderBook:
                             new_order_history_idx_absolute = self.order_id_to_history_idx[new_order.order_id]
                             new_order_history_idx_modulo = new_order_history_idx_absolute % len(self.history)
 
-                            # an item is in recent history if 
-                            # self.history_idx_counter - new_order_history_idx_absolute < len(self.history)
-                            if new_order.order_id in self.history[new_order_history_idx_modulo] and \
-                            self.history_idx_counter - new_order_history_idx_absolute < len(self.history):
+                            if new_order.order_id in self.history[new_order_history_idx_modulo]:
                                 self.history[new_order_history_idx_modulo][new_order.order_id]['modifications'].append(
                                     (self.owner.currentTime, new_order.quantity))
                                 log_print("MODIFIED: order {}", order)
@@ -485,11 +481,7 @@ class OrderBook:
         # Load history into DataFrame
         unrolled_history = []
         for elem in history:
-            for order_id, val in elem.items():
-
-                # New behavior: filter recent history here
-                # recent iff self.history_idx_counter - self.order_id_to_history_idx[order_id] < len(self.history)
-                if self.history_idx_counter - self.order_id_to_history_idx[order_id] < len(self.history):
+            for _, val in elem.items():
                     unrolled_history.append(val)
 
         unrolled_history_df = pd.DataFrame(unrolled_history, columns=[
