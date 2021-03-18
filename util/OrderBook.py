@@ -345,8 +345,8 @@ class OrderBook:
                         cancelled_order = book[i].pop(ci)
 
                         # Record cancellation of the order if it is still present in the recent history structure.
-                        for idx, orders in enumerate(self.history):
-                            if cancelled_order.order_id not in orders: continue
+                        if cancelled_order.order_id in self.order_to_history_idx:
+                            idx = self.order_to_history_idx[matched_order.order_id]
 
                             # Found the cancelled order in history.  Update it with the cancelation.
                             self.history[idx][cancelled_order.order_id]['cancellations'].append(
