@@ -38,10 +38,14 @@ class OrderBook:
 
         # counter for history idx position since we don't truncate fixed-size history
         # this should take values in [0, 25000) only
-        self.history_idx_counter = 0
+        self.history_idx_counter_absolute = 0
+        self.history_idx_counter_relative = 0
 
         # Counter that stores orders since most recent trade
         self.orders_since_most_recent_trade = 0
+
+        # Counter that stores history index of last call of self.get_transacted_volume()
+        self.gtv_history_idx_counter_absolute = 0
 
         # Last timestamp the orderbook for that symbol was updated
         self.last_update_ts = None
@@ -67,14 +71,14 @@ class OrderBook:
 
         # Old Behavior: Add the order under index 0 of history: orders since the most recent trade.
         # New behavior: adds to history[history_idx_counter]
-        insert_idx = self.history_idx_counter
+        insert_idx = self.history_idx_counter_relative
         self.history[insert_idx][order.order_id] = {'entry_time': self.owner.currentTime,
                                            'quantity': order.quantity, 'is_buy_order': order.is_buy_order,
                                            'limit_price': order.limit_price, 'transactions': [],
                                            'modifications': [],
                                            'cancellations': []}
 
-        self.order_id_to_history_idx[order.order_id] = self.history_idx_counter
+        self.order_id_to_history_idx[order.order_id] = self.history_idx_counter_relative
         self.orders_since_most_recent_trade += 1
 
         matching = True
@@ -151,10 +155,12 @@ class OrderBook:
                 # self.history.insert(0, {})
                 # New behavior: increment history_idx_counter (after flushing that index of history)
 
-                history_next_idx = (self.history_idx_counter + 1) % len(self.history)
+                self.history_idx_counter_absolute += 1
+
+                history_next_idx = (self.history_idx_counter_relative + 1) % len(self.history)
                 self.history[history_next_idx] = {}
 
-                self.history_idx_counter = history_next_idx
+                self.history_idx_counter_relative = history_next_idx
 
                 # Truncate history to required length.
                 # self.history = self.history[:self.owner.stream_history + 1]
@@ -453,16 +459,72 @@ class OrderBook:
             Also updates self._transacted_volume[self.history_previous_length]
         :return:
         """
-        if self._transacted_volume["self.history_previous_length"] == 0:
-            self._transacted_volume["self.history_previous_length"] = len(self.history)
-            return self.history
-        elif self._transacted_volume["self.history_previous_length"] == len(self.history):
-            return {}
-        else:
-            idx = len(self.history) - self._transacted_volume["self.history_previous_length"] - 1
-            recent_history = self.history[0:idx]
-            self._transacted_volume["self.history_previous_length"] = len(self.history)
+        # Old Implementation
+
+        # if self._transacted_volume["self.history_previous_length"] == 0:
+        #     self._transacted_volume["self.history_previous_length"] = len(self.history)
+        #     return self.history
+        # elif self._transacted_volume["self.history_previous_length"] == len(self.history):
+        #     return {}
+        # else:
+        #     idx = len(self.history) - self._transacted_volume["self.history_previous_length"] - 1
+        #     recent_history = self.history[0:idx]
+        #     self._transacted_volume["self.history_previous_length"] = len(self.history)
+        #     return recent_history
+
+        # New implementation using universal indices
+
+        # need to reverse recent_history since indices increase left-> right unlike before.
+        gtv_history_idx_counter_relative = self.gtv_history_idx_counter_absolute % len(self.history)
+        if self.history_idx_counter_absolute < len(self.history):
+            # Case 1: on first pass through history, many empty-dict indices
+            recent_history = self.history[self.history_idx_counter_absolute - 1: gtv_history_idx_counter_relative - 1: -1]
+            #recent_history = (self.history[0:self.history_idx_counter_absolute])[::-1]
+            self.gtv_history_idx_counter_absolute = self.history_idx_counter_absolute
             return recent_history
+        else:
+            # Case 2 and 3 requires "wrap-around" construction of recent history
+
+            counter_diff = (self.history_idx_counter_absolute - self.gtv_history_idx_counter_absolute)
+            
+            # Case 2: on 2nd+ pass through history, one empty-dict index, diff < len(history)
+            if counter_diff < len(self.history):
+                if self.history_idx_counter_relative >= gtv_history_idx_counter_relative:
+                    # Case 2.1 self.history_idx_counter_relative % len(self.history) >= self.gtv_history_idx_counter_absolute) % len(history)
+                    # recent portion is self.history[gtv_history_idx_counter_relative: self.self.history_idx_counter_relative][::-1]
+                    # recent_history = (self.history[gtv_history_idx_counter_relative:self.history_idx_counter_absolute])[::-1]
+                    recent_history = self.history[self.history_idx_counter_absolute - 1: gtv_history_idx_counter_relative - 1: -1]
+                    self.gtv_history_idx_counter_absolute = self.history_idx_counter_absolute
+                    return recent_history
+                else:
+                    # Case 2.2 self.history_idx_counter_absolute % len(self.history) < self.gtv_history_idx_counter_absolute) % len(history)
+                    # recent_history = self.history[gtv_history_idx_counter_relative:]
+                    # recent_history.extend(self.history[:self.history_idx_counter_relative])
+                    recent_history = self.history[self.history_idx_counter_relative - 1: -1: -1]
+                    recent_history.extend(self.history[len(self.history) - 1: gtv_history_idx_counter_relative: -1])
+
+                    # recent_history = (self.history[gtv_history_idx_counter_relative:] + \
+                    #                   self.history[:self.history_idx_counter_relative])[::-1]
+                    assert len(self.history) == self.owner.stream_history
+                    self.gtv_history_idx_counter_absolute = self.history_idx_counter_absolute
+                    return recent_history[::-1]
+
+            # Case 3: on 2nd+ pass through history, one empty-dict index, diff >= len(history)
+            elif counter_diff >= len(self.history):
+                # been more than len(history) trades since last call to self.get_transacted_volume - everything in history is "recent"
+                # recent_history = (self.history[((self.history_idx_counter_relative + 1) % len(self.history)):] + \
+                #                       self.history[:self.history_idx_counter_relative])[::-1]
+
+                # recent_history = self.history[((self.history_idx_counter_relative + 1) % len(self.history)):]
+                # recent_history.extend(self.history[:self.history_idx_counter_relative])
+                print("Case III")
+
+                recent_history = self.history[self.history_idx_counter_relative - 1: - 1: - 1]
+                recent_history.extend(self.history[len(self.history) - 1: self.history_idx_counter_relative: -1])
+
+                assert len(self.history) == self.owner.stream_history
+                self.gtv_history_idx_counter_absolute = self.history_idx_counter_absolute
+                return recent_history[::-1]
 
     def _update_unrolled_transactions(self, recent_history):
         """ Updates self._transacted_volume["unrolled_transactions"] with data from recent_history
