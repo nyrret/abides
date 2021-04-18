@@ -1,10 +1,13 @@
+# distutils: language=c++
+
 # Basic class for an order book for one symbol, in the style of the major US Stock Exchanges.
 # List of bid prices (index zero is best bid), each with a list of LimitOrders.
 # List of ask prices (index zero is best ask), each with a list of LimitOrders.
 import sys
 
 from message.Message import Message
-from util.order.LimitOrder import LimitOrder
+from util.order.LimitOrderPyx import LimitOrder
+from util.order.OrderPyx cimport OrderPyx
 from util.util import log_print, be_silent
 
 from copy import deepcopy
@@ -14,13 +17,15 @@ from functools import reduce
 from scipy.sparse import dok_matrix
 from tqdm import tqdm
 
+from libcpp.vector cimport vector
 
-class OrderBook:
+
+cdef class OrderBook:
 
     # An OrderBook requires an owning agent object, which it will use to send messages
     # outbound via the simulator Kernel (notifications of order creation, rejection,
     # cancellation, execution, etc).
-    def __init__(self, owner, symbol):
+    def __init__(self, owner, str symbol):
         self.owner = owner
         self.symbol = symbol
         self.bids = []
@@ -52,86 +57,91 @@ class OrderBook:
             "self.history_previous_length": 0
         }
 
-    def handleLimitOrder(self, order):
+    cpdef handleLimitOrder(order_book, OrderPyx order):
         # Matches a limit order or adds it to the order book.  Handles partial matches piecewise,
         # consuming all possible shares at the best price before moving on, without regard to
         # order size "fit" or minimizing number of transactions.  Sends one notification per
         # match.
-        if order.symbol != self.symbol:
-            log_print("{} order discarded.  Does not match OrderBook symbol: {}", order.symbol, self.symbol)
+        
+        # TODO: can do the below in a python wrapper so can eventually call from
+        # C++ and maybe parallelize
+        if order.symbol != order_book.symbol:
+            log_print("{} order discarded.  Does not match OrderBook symbol: {}", order.symbol, order_book.symbol)
             return
-
+    
         if (order.quantity <= 0) or (int(order.quantity) != order.quantity):
             log_print("{} order discarded.  Quantity ({}) must be a positive integer.", order.symbol, order.quantity)
             return
-
+    
         # Old Behavior: Add the order under index 0 of history: orders since the most recent trade.
         # New behavior: adds to history[history_idx_counter]
-        insert_idx = self.history_idx_counter
-        self.history[insert_idx][order.order_id] = {'entry_time': self.owner.currentTime,
+        insert_idx = order_book.history_idx_counter
+        order_book.history[insert_idx][order.order_id] = {'entry_time': order_book.owner.currentTime,
                                            'quantity': order.quantity, 'is_buy_order': order.is_buy_order,
                                            'limit_price': order.limit_price, 'transactions': [],
                                            'modifications': [],
                                            'cancellations': []}
-
-        self.order_id_to_history_idx[order.order_id] = self.history_idx_counter
-        self.orders_since_most_recent_trade += 1
-
+    
+        order_book.order_id_to_history_idx[order.order_id] = order_book.history_idx_counter
+        order_book.orders_since_most_recent_trade += 1
+    
         matching = True
-
-        self.prettyPrint()
-
+    
+        order_book.prettyPrint()
+    
         executed = []
-
+    
+        # TODO: the below should be done in Cython
+    
         while matching:
-            matched_order = deepcopy(self.executeOrder(order))
-
+            matched_order = deepcopy(order_book.executeOrder(order))
+    
             if matched_order:
                 # Decrement quantity on new order and notify traders of execution.
                 filled_order = deepcopy(order)
                 filled_order.quantity = matched_order.quantity
                 filled_order.fill_price = matched_order.fill_price
-
+    
                 order.quantity -= filled_order.quantity
-
+    
                 log_print("MATCHED: new order {} vs old order {}", filled_order, matched_order)
                 log_print("SENT: notifications of order execution to agents {} and {} for orders {} and {}",
                           filled_order.agent_id, matched_order.agent_id, filled_order.order_id, matched_order.order_id)
-
-                self.owner.sendMessage(order.agent_id, Message({"msg": "ORDER_EXECUTED", "order": filled_order}))
-                self.owner.sendMessage(matched_order.agent_id,
+    
+                order_book.owner.sendMessage(order.agent_id, Message({"msg": "ORDER_EXECUTED", "order": filled_order}))
+                order_book.owner.sendMessage(matched_order.agent_id,
                                        Message({"msg": "ORDER_EXECUTED", "order": matched_order}))
-
+    
                 # Accumulate the volume and average share price of the currently executing inbound trade.
                 executed.append((filled_order.quantity, filled_order.fill_price))
-
+    
                 if order.quantity <= 0:
                     matching = False
-
+    
             else:
                 # No matching order was found, so the new order enters the order book.  Notify the agent.
-                self.enterOrder(deepcopy(order))
-
+                order_book.enterOrder(deepcopy(order))
+    
                 log_print("ACCEPTED: new order {}", order)
                 log_print("SENT: notifications of order acceptance to agent {} for order {}",
                           order.agent_id, order.order_id)
-
-                self.owner.sendMessage(order.agent_id, Message({"msg": "ORDER_ACCEPTED", "order": order}))
-
+    
+                order_book.owner.sendMessage(order.agent_id, Message({"msg": "ORDER_ACCEPTED", "order": order}))
+    
                 matching = False
-
+    
         if not matching:
             # Now that we are done executing or accepting this order, log the new best bid and ask.
-            if self.bids:
-                self.owner.logEvent('BEST_BID', "{},{},{}".format(self.symbol,
-                                                                  self.bids[0][0].limit_price,
-                                                                  sum([o.quantity for o in self.bids[0]])))
-
-            if self.asks:
-                self.owner.logEvent('BEST_ASK', "{},{},{}".format(self.symbol,
-                                                                  self.asks[0][0].limit_price,
-                                                                  sum([o.quantity for o in self.asks[0]])))
-
+            if order_book.bids:
+                order_book.owner.logEvent('BEST_BID', "{},{},{}".format(order_book.symbol,
+                                                                  order_book.bids[0][0].limit_price,
+                                                                  sum([o.quantity for o in order_book.bids[0]])))
+    
+            if order_book.asks:
+                order_book.owner.logEvent('BEST_ASK', "{},{},{}".format(order_book.symbol,
+                                                                  order_book.asks[0][0].limit_price,
+                                                                  sum([o.quantity for o in order_book.asks[0]])))
+    
             # Also log the last trade (total share quantity, average share price).
             if executed:
                 trade_qty = 0
@@ -140,48 +150,48 @@ class OrderBook:
                     log_print("Executed: {} @ {}", q, p)
                     trade_qty += q
                     trade_price += (p * q)
-
+    
                 avg_price = int(round(trade_price / trade_qty))
                 log_print("Avg: {} @ ${:0.4f}", trade_qty, avg_price)
-                self.owner.logEvent('LAST_TRADE', "{},${:0.4f}".format(trade_qty, avg_price))
-
-                self.last_trade = avg_price
-
+                order_book.owner.logEvent('LAST_TRADE', "{},${:0.4f}".format(trade_qty, avg_price))
+    
+                order_book.last_trade = avg_price
+    
                 # Transaction occurred, so advance indices.
-                # self.history.insert(0, {})
+                # order_book.history.insert(0, {})
                 # New behavior: increment history_idx_counter (after flushing that index of history)
-
-                history_next_idx = (self.history_idx_counter + 1) % len(self.history)
-                self.history[history_next_idx] = {}
-
-                self.history_idx_counter = history_next_idx
-
+    
+                history_next_idx = (order_book.history_idx_counter + 1) % len(order_book.history)
+                order_book.history[history_next_idx] = {}
+    
+                order_book.history_idx_counter = history_next_idx
+    
                 # Truncate history to required length.
-                # self.history = self.history[:self.owner.stream_history + 1]
+                # order_book.history = order_book.history[:order_book.owner.stream_history + 1]
                 # New behavior - resizing history not required since using fixed-size
-                # just reset self.orders_since_most_recent_trade
-
-                self.orders_since_most_recent_trade = 0
+                # just reset order_book.orders_since_most_recent_trade
+    
+                order_book.orders_since_most_recent_trade = 0
                 
-
+    
             # Finally, log the full depth of the order book, ONLY if we have been requested to store the order book
             # for later visualization.  (This is slow.)
-            if self.owner.book_freq is not None:
-                row = {'QuoteTime': self.owner.currentTime}
-                for quote, volume in self.getInsideBids():
+            if order_book.owner.book_freq is not None:
+                row = {'QuoteTime': order_book.owner.currentTime}
+                for quote, volume in order_book.getInsideBids():
                     row[quote] = -volume
-                    self.quotes_seen.add(quote)
-                for quote, volume in self.getInsideAsks():
+                    order_book.quotes_seen.add(quote)
+                for quote, volume in order_book.getInsideAsks():
                     if quote in row:
                         if row[quote] is not None:
                             print(
                                 "WARNING: THIS IS A REAL PROBLEM: an order book contains bids and asks at the same quote price!")
                     row[quote] = volume
-                    self.quotes_seen.add(quote)
-                self.book_log.append(row)
-        self.last_update_ts = self.owner.currentTime
-        self.prettyPrint()
-
+                    order_book.quotes_seen.add(quote)
+                order_book.book_log.append(row)
+        order_book.last_update_ts = order_book.owner.currentTime
+        order_book.prettyPrint()
+    
     def handleMarketOrder(self, order):
 
         if order.symbol != self.symbol:
@@ -424,16 +434,25 @@ class OrderBook:
     # Get the inside bid price(s) and share volume available at each price, to a limit
     # of "depth".  (i.e. inside price, inside 2 prices)  Returns a list of tuples:
     # list index is best bids (0 is best); each tuple is (price, total shares).
-    def getInsideBids(self, depth=sys.maxsize):
-        book = []
-        for i in range(min(depth, len(self.bids))):
+    cpdef getInsideBids(self, unsigned long long depth=sys.maxsize):
+        cdef vector[float] book_price
+        cdef vector[float] book_qty
+        cdef unsigned long long bids_len  = len(self.bids)
+        cdef int book_len = min(depth, bids_len)
+        book_price.reserve(book_len)
+        book_qty.reserve(book_len)
+        cdef float qty, price
+    
+        for i in range(book_len):
             qty = 0
             price = self.bids[i][0].limit_price
             for o in self.bids[i]:
                 qty += o.quantity
-            book.append((price, qty))
+            book_price.push_back(price)
+            book_qty.push_back(qty)
+    
+        return list(zip(book_price, book_qty))
 
-        return book
 
     # As above, except for ask price(s).
     def getInsideAsks(self, depth=sys.maxsize):
@@ -536,7 +555,7 @@ class OrderBook:
 
         return False
 
-    def isEqualPrice(self, order, o):
+    cpdef isEqualPrice(self, OrderPyx order, OrderPyx o):
         return order.limit_price == o.limit_price
 
     def isSameOrder(self, order, new_order):

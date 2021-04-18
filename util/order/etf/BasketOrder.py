@@ -3,7 +3,7 @@
 # A buy order translates to a creation order for an ETF share
 # A sell order translates to a redemption order for shares of the underlying.
 
-from util.order.Order import Order
+from util.order.OrderPyx import Order
 from Kernel import Kernel
 from agent.FinancialAgent import dollarize
 

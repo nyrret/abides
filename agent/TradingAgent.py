@@ -1,7 +1,7 @@
 from agent.FinancialAgent import FinancialAgent
 from agent.ExchangeAgent import ExchangeAgent
 from message.Message import Message
-from util.order.LimitOrder import LimitOrder
+from util.order.LimitOrderPyx import LimitOrder
 from util.order.MarketOrder import MarketOrder
 from util.util import log_print
 

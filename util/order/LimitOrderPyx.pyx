@@ -1,7 +1,10 @@
+# distutils: language=c++
+
 # LimitOrder class, inherits from Order class, adds a limit price.  These are the
 # Orders that typically go in an Exchange's OrderBook.
 
-from util.order.OrderPyx import Order
+from util.order.OrderPyx cimport OrderPyx
+from util.order.OrderGlobals import Order_order_ids
 from Kernel import Kernel
 from agent.FinancialAgent import dollarize
 from copy import deepcopy
@@ -12,7 +15,7 @@ import sys
 silent_mode = False
 
 
-class LimitOrder(Order):
+cdef class LimitOrderPyx(OrderPyx):
 
     def __init__(self, agent_id, time_placed, symbol, quantity, is_buy_order, limit_price, order_id=None, tag=None):
 
@@ -47,7 +50,8 @@ class LimitOrder(Order):
                            self.limit_price,
                            order_id=self.order_id,
                            tag=self.tag)
-        Order._order_ids.pop()  # remove duplicate agent ID
+        Order_order_ids.pop()
+        #Order_order_ids.erase(Order_order_ids.find(order.order_id))  # remove duplicate agent ID
         order.fill_price = self.fill_price
         return order
 
@@ -69,3 +73,6 @@ class LimitOrder(Order):
         order.fill_price = fill_price
 
         return order
+
+class LimitOrder(LimitOrderPyx):
+    pass
