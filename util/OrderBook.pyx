@@ -6,8 +6,8 @@
 import sys
 
 from message.Message import Message
-from util.order.LimitOrderPyx import LimitOrder
-from util.order.OrderPyx cimport OrderPyx
+from util.order.LimitOrder cimport LimitOrder
+from util.order.Order cimport Order
 from util.util import log_print, be_silent
 
 from copy import deepcopy
@@ -57,7 +57,7 @@ cdef class OrderBook:
             "self.history_previous_length": 0
         }
 
-    cpdef handleLimitOrder(order_book, OrderPyx order):
+    cpdef handleLimitOrder(order_book, Order order):
         # Matches a limit order or adds it to the order book.  Handles partial matches piecewise,
         # consuming all possible shares at the best price before moving on, without regard to
         # order size "fit" or minimizing number of transactions.  Sends one notification per
@@ -92,6 +92,7 @@ cdef class OrderBook:
         executed = []
     
         # TODO: the below should be done in Cython
+        cdef LimitOrder matched_order
     
         while matching:
             matched_order = deepcopy(order_book.executeOrder(order))
@@ -222,7 +223,7 @@ cdef class OrderBook:
             limit_order = LimitOrder(order.agent_id, order.time_placed, order.symbol, q, order.is_buy_order, p)
             self.handleLimitOrder(limit_order)
 
-    def executeOrder(self, order):
+    cpdef Order executeOrder(self, Order order):
         # Finds a single best match for this order, without regard for quantity.
         # Returns the matched order or None if no match found.  DOES remove,
         # or decrement quantity from, the matched order from the order book
@@ -236,6 +237,8 @@ cdef class OrderBook:
 
         # TODO: Simplify?  It is ever possible to actually select an execution match
         # other than the best bid or best ask?  We may not need these execute loops.
+
+        cdef Order matched_order 
 
         # First, examine the correct side of the order book for a match.
         if not book:
@@ -555,7 +558,7 @@ cdef class OrderBook:
 
         return False
 
-    cpdef isEqualPrice(self, OrderPyx order, OrderPyx o):
+    cpdef isEqualPrice(self, Order order, Order o):
         return order.limit_price == o.limit_price
 
     def isSameOrder(self, order, new_order):

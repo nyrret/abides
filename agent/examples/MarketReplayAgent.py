@@ -5,7 +5,7 @@ import pandas as pd
 #from joblib import Memory
 
 from agent.TradingAgent import TradingAgent
-from util.order.LimitOrderPyx import LimitOrder
+from util.order.LimitOrder import LimitOrder
 from util.util import log_print
 
 

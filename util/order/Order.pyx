@@ -11,7 +11,7 @@ from util.order.OrderGlobals import Order_order_ids
 
 Order_order_id = 0
 
-cdef class OrderPyx:
+cdef class Order:
 
     def __init__(self, agent_id, time_placed, str symbol, quantity, is_buy_order, order_id=None, tag=None):
 
@@ -61,8 +61,16 @@ cdef class OrderPyx:
         return oid
 
     def to_dict(self):
-        as_dict = deepcopy(self).__dict__
+        #as_dict = deepcopy(self).__dict__
+        as_dict = {}
+        as_dict['agent_id'] = self.agent_id
         as_dict['time_placed'] = self.time_placed.isoformat()
+        as_dict['symbol'] = self.symbol
+        as_dict['quantity'] = self.quantity
+        as_dict['is_buy_order'] = self.is_buy_order
+        as_dict['order_id'] = self.order_id
+        as_dict['fill_price'] = self.fill_price
+        as_dict['tag'] = self.tag
         return as_dict
 
     def __copy__(self):
@@ -70,7 +78,3 @@ cdef class OrderPyx:
 
     def __deepcopy__(self, memodict={}):
         raise NotImplementedError
-
-
-class Order(OrderPyx):
-    pass

@@ -2,7 +2,7 @@
 
 import sys
 
-from util.order.OrderPyx cimport OrderPyx
+from util.order.Order cimport Order
 
 cdef class OrderBook:
     cdef object owner
@@ -19,6 +19,7 @@ cdef class OrderBook:
     cdef object last_update_ts
     cdef object _transacted_volume
 
-    cpdef handleLimitOrder(order_book, OrderPyx order)
+    cpdef handleLimitOrder(order_book, Order order)
     cpdef getInsideBids(self, unsigned long long depth=*)
-    cpdef isEqualPrice(self, OrderPyx order, OrderPyx o)
+    cpdef isEqualPrice(self, Order order, Order o)
+    cpdef Order executeOrder(self, Order order)

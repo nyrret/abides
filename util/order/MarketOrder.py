@@ -1,4 +1,4 @@
-from util.order.OrderPyx import Order
+from util.order.Order import Order
 from Kernel import Kernel
 from agent.FinancialAgent import dollarize
 from copy import deepcopy
