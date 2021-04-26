@@ -93,11 +93,12 @@ cdef class OrderBook:
     
         # TODO: the below should be done in Cython
         cdef LimitOrder matched_order
+        cdef LimitOrder filled_order
     
         while matching:
             matched_order = deepcopy(order_book.executeOrder(order))
     
-            if matched_order:
+            if matched_order is not None:
                 # Decrement quantity on new order and notify traders of execution.
                 filled_order = deepcopy(order)
                 filled_order.quantity = matched_order.quantity
