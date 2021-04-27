@@ -25,6 +25,10 @@ cdef class LimitOrder(Order):
         # the maximum price the agent will pay (for a buy order).
         self.limit_price: int = limit_price
 
+    def to_dict(self):
+        as_dict = super().to_dict()
+        as_dict['limit_price'] = self.limit_price
+
     def __str__(self):
         if silent_mode: return ''
 
