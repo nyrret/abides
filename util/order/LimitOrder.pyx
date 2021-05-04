@@ -28,6 +28,7 @@ cdef class LimitOrder(Order):
     def to_dict(self):
         as_dict = super().to_dict()
         as_dict['limit_price'] = self.limit_price
+        return as_dict
 
     def __str__(self):
         if silent_mode: return ''
