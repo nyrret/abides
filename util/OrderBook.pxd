@@ -3,6 +3,7 @@
 import sys
 
 from util.order.Order cimport Order
+from libcpp.map cimport map
 
 cdef class OrderBook:
     cdef object owner
@@ -13,7 +14,7 @@ cdef class OrderBook:
     cdef public object book_log
     cdef object quotes_seen
     cdef public object history
-    cdef object order_id_to_history_idx
+    cdef map[unsigned int, unsigned int] order_id_to_history_idx
     cdef int history_idx_counter
     cdef int orders_since_most_recent_trade
     cdef object last_update_ts

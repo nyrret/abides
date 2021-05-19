@@ -39,7 +39,6 @@ cdef class OrderBook:
         # Create an order history for the exchange to report to certain agent types.
         # Change: Fixed-Size history (self.owner.stream_history)
         self.history = [{} for i in range(self.owner.stream_history)]
-        self.order_id_to_history_idx = {} # implementing Terryn's strategy of mapping order_id to history_idx
 
         # counter for history idx position since we don't truncate fixed-size history
         # this should take values in [0, 25000) only
@@ -288,7 +287,7 @@ cdef class OrderBook:
 
             # The pre-existing order may or may not still be in the recent history.
             # for idx, orders in enumerate(self.history):
-            if matched_order.order_id in self.order_id_to_history_idx:
+            if self.order_id_to_history_idx.count(matched_order.order_id) > 0:
 
                 matched_order_history_idx_absolute = self.order_id_to_history_idx[matched_order.order_id]
                 matched_order_history_idx_modulo = matched_order_history_idx_absolute % len(self.history)
@@ -376,7 +375,8 @@ cdef class OrderBook:
                         #for idx, orders in enumerate(self.history):
                             #if cancelled_order.order_id not in orders: continue
 
-                        if cancelled_order.order_id in self.order_id_to_history_idx:
+                        #if cancelled_order.order_id in self.order_id_to_history_idx:
+                        if self.order_id_to_history_idx.count(cancelled_order.order_id) > 0:
 
                             cancelled_order_history_idx_absolute = self.order_id_to_history_idx[cancelled_order.order_id]
                             cancelled_order_history_idx_modulo = cancelled_order_history_idx_absolute % len(self.history)
@@ -416,7 +416,8 @@ cdef class OrderBook:
                         #for idx, orders in enumerate(self.history):
                            #if new_order.order_id not in orders: continue
                         # New behavior:
-                        if new_order.order_id in self.order_id_to_history_idx:
+                        #if new_order.order_id in self.order_id_to_history_idx:
+                        if self.order_id_to_history_idx.count(new_order.order_id) > 0:
 
                             new_order_history_idx_absolute = self.order_id_to_history_idx[new_order.order_id]
                             new_order_history_idx_modulo = new_order_history_idx_absolute % len(self.history)
